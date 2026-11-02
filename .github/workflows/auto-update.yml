@@ -1,0 +1,204 @@
+# This only replaces .github/workflows/auto-update.yml.
+# It preserves your existing custom .github/workflows/buildapp.yml unchanged.
+name: Auto-update uYouEnhanced and publish IPA
+
+on:
+  schedule:
+    - cron: '37 5 * * *'
+  workflow_dispatch:
+    inputs:
+      force_build:
+        description: 'Rebuild even if this source commit was already released'
+        type: boolean
+        default: false
+        required: false
+
+permissions:
+  contents: write
+  actions: write
+
+concurrency:
+  group: uyouenhanced-auto-update
+  cancel-in-progress: false
+
+jobs:
+  sync-build-release:
+    runs-on: ubuntu-latest
+    timeout-minutes: 180
+    env:
+      GH_TOKEN: ${{ github.token }}
+      YOUTUBE_IPA_URL: ${{ secrets.YOUTUBE_IPA_URL }}
+      BUILD_SDK_VERSION: ${{ vars.UYOU_SDK_VERSION || '26.5' }}
+      BUILD_UYOU_VERSION: ${{ vars.UYOU_VERSION }}
+      BUILD_BUNDLE_ID: ${{ vars.UYOU_BUNDLE_ID }}
+      BUILD_APP_NAME: ${{ vars.UYOU_APP_NAME }}
+      BUILD_YTUHD: ${{ vars.UYOU_YTUHD }}
+
+    steps:
+      - name: Check out your fork
+        uses: actions/checkout@v4
+        with:
+          fetch-depth: 0
+          persist-credentials: true
+
+      - name: Check YouTube IPA source
+        shell: bash
+        run: |
+          set -euo pipefail
+          [[ -f .github/workflows/buildapp.yml ]] || { echo '::error::Custom buildapp.yml missing.'; exit 1; }
+          # Draft releases are visible to this repository's Actions token but not
+          # to public visitors until published. Keep the base IPA draft unpublished.
+          if gh release view youtube-base -R "$GITHUB_REPOSITORY" --json assets --jq '.assets[].name' 2>/dev/null | grep -Fxq 'YouTube.ipa'; then
+            echo 'Source IPA is stored in your youtube-base draft release.'
+            exit 0
+          fi
+          if [[ -z "$YOUTUBE_IPA_URL" || "$YOUTUBE_IPA_URL" != https://* ]]; then
+            echo '::error::No source IPA. Upload a decrypted YouTube.ipa to the youtube-base draft release (preferred), or update the YOUTUBE_IPA_URL secret.'
+            exit 1
+          fi
+          HTTP_CODE="$(curl -sSL --range 0-0 --max-time 45 -o /dev/null -w '%{http_code}' \
+            "$YOUTUBE_IPA_URL" 2>/dev/null || true)"
+          case "$HTTP_CODE" in
+            200|206) echo 'External IPA source responds successfully.' ;;
+            *) echo "::error::YouTube IPA URL is inaccessible (HTTP ${HTTP_CODE:-unknown}). Upload YouTube.ipa to a draft release named youtube-base, or replace YOUTUBE_IPA_URL."; exit 1 ;;
+          esac
+
+      - name: Merge upstream, preserving your custom build workflow
+        id: sync
+        shell: bash
+        run: |
+          set -euo pipefail
+          git config user.name 'github-actions[bot]'
+          git config user.email '41898282+github-actions[bot]@users.noreply.github.com'
+          git fetch origin main
+          BASE_SHA="$(git rev-parse origin/main)"
+          BRANCH="uyou-auto-${GITHUB_RUN_ID}-${GITHUB_RUN_ATTEMPT}"
+          git switch -C "$BRANCH" origin/main
+          git remote add upstream https://github.com/arichornlover/uYouEnhanced.git
+          git fetch upstream main
+
+          if ! git merge-base --is-ancestor upstream/main HEAD; then
+            set +e
+            git merge --no-commit --no-ff upstream/main
+            MERGE_RC=$?
+            set -e
+            if (( MERGE_RC != 0 )); then
+              mapfile -t CONFLICTS < <(git diff --name-only --diff-filter=U)
+              if (( ${#CONFLICTS[@]} == 0 )); then
+                echo '::error::Upstream merge failed unexpectedly.'
+                exit 1
+              fi
+              for path in "${CONFLICTS[@]}"; do
+                if [[ "$path" == .github/workflows/buildapp.yml ]]; then
+                  git checkout --ours -- "$path"
+                  git add -- "$path"
+                else
+                  echo "::error::Upstream merge conflict needs manual resolution: $path"
+                  exit 1
+                fi
+              done
+            fi
+            # Restore the complete, user-customized workflow without altering it.
+            git restore --source=origin/main --staged --worktree -- .github/workflows/buildapp.yml
+            if [[ -n "$(git ls-files -u)" ]]; then
+              echo '::error::Unresolved merge conflicts. Nothing was published.'
+              exit 1
+            fi
+            git commit -m 'Merge upstream uYouEnhanced (preserve custom build workflow)'
+          fi
+
+          SHA="$(git rev-parse HEAD)"
+          TAG="uyou-auto-${SHA:0:12}"
+          FORCE='${{ inputs.force_build || false }}'
+          if [[ "$FORCE" == 'true' ]]; then
+            TAG="${TAG}-${GITHUB_RUN_ID}"
+          fi
+          echo "base_sha=$BASE_SHA" >> "$GITHUB_OUTPUT"
+          echo "new_sha=$SHA" >> "$GITHUB_OUTPUT"
+          echo "tag=$TAG" >> "$GITHUB_OUTPUT"
+          echo "branch=$BRANCH" >> "$GITHUB_OUTPUT"
+          if [[ "$FORCE" != 'true' ]] && gh release view "$TAG" -R "$GITHUB_REPOSITORY" --json tagName >/dev/null 2>&1; then
+            echo 'already_released=true' >> "$GITHUB_OUTPUT"
+            echo 'Already built this source version; no new IPA needed.'
+          else
+            echo 'already_released=false' >> "$GITHUB_OUTPUT"
+            git push origin "HEAD:refs/heads/$BRANCH"
+          fi
+
+      - name: Launch your EXISTING custom build with SponsorBlock enabled
+        if: steps.sync.outputs.already_released != 'true'
+        id: dispatch
+        shell: bash
+        run: |
+          set -euo pipefail
+          BRANCH='${{ steps.sync.outputs.branch }}'
+          args=( -R "$GITHUB_REPOSITORY" --ref "$BRANCH"
+                 -f 'upload_artifact=true'
+                 -f 'create_release=false'
+                 -f 'sponsorblock=true'
+                 -f "sdk_version=$BUILD_SDK_VERSION" )
+          [[ -z "$BUILD_UYOU_VERSION" ]] || args+=( -f "uyou_version=$BUILD_UYOU_VERSION" )
+          [[ -z "$BUILD_BUNDLE_ID" ]] || args+=( -f "bundle_id=$BUILD_BUNDLE_ID" )
+          [[ -z "$BUILD_APP_NAME" ]] || args+=( -f "app_name=$BUILD_APP_NAME" )
+          [[ -z "$BUILD_YTUHD" ]] || args+=( -f "ytuhd=$BUILD_YTUHD" )
+          gh workflow run buildapp.yml "${args[@]}"
+          RUN_ID=''
+          for _ in $(seq 1 30); do
+            RUN_ID="$(gh run list -R "$GITHUB_REPOSITORY" \
+              --workflow buildapp.yml --branch "$BRANCH" --event workflow_dispatch \
+              --limit 10 --json databaseId --jq '.[0].databaseId // empty')"
+            [[ -z "$RUN_ID" ]] || break
+            sleep 10
+          done
+          [[ -n "$RUN_ID" ]] || { echo '::error::Could not find the dispatched build.'; exit 1; }
+          echo "run_id=$RUN_ID" >> "$GITHUB_OUTPUT"
+          echo "Custom build: https://github.com/$GITHUB_REPOSITORY/actions/runs/$RUN_ID"
+
+      - name: Verify the build and download the finished IPA
+        if: steps.sync.outputs.already_released != 'true'
+        id: ipa
+        shell: bash
+        run: |
+          set -euo pipefail
+          RUN_ID='${{ steps.dispatch.outputs.run_id }}'
+          if ! gh run watch "$RUN_ID" -R "$GITHUB_REPOSITORY" --exit-status --interval 15; then
+            echo "::error::Custom build failed: https://github.com/$GITHUB_REPOSITORY/actions/runs/$RUN_ID"
+            gh run view "$RUN_ID" -R "$GITHUB_REPOSITORY" --log-failed | tail -n 100 || true
+            exit 1
+          fi
+          mkdir -p "$RUNNER_TEMP/uyou-ipa"
+          gh run download "$RUN_ID" -R "$GITHUB_REPOSITORY" --dir "$RUNNER_TEMP/uyou-ipa"
+          mapfile -d '' IPAS < <(find "$RUNNER_TEMP/uyou-ipa" -type f -name '*.ipa' -print0)
+          if (( ${#IPAS[@]} != 1 )); then
+            echo "::error::Expected exactly one IPA artifact, found ${#IPAS[@]}."
+            exit 1
+          fi
+          unzip -tq "${IPAS[0]}" >/dev/null
+          cp -- "${IPAS[0]}" "$RUNNER_TEMP/uYouEnhanced.ipa"
+          echo "ipa_path=$RUNNER_TEMP/uYouEnhanced.ipa" >> "$GITHUB_OUTPUT"
+
+      - name: Publish IPA only after a successful build
+        if: steps.sync.outputs.already_released != 'true'
+        shell: bash
+        run: |
+          set -euo pipefail
+          NEW_SHA='${{ steps.sync.outputs.new_sha }}'
+          BASE_SHA='${{ steps.sync.outputs.base_sha }}'
+          BRANCH='${{ steps.sync.outputs.branch }}'
+          TAG='${{ steps.sync.outputs.tag }}'
+          git fetch origin main
+          if [[ "$(git rev-parse origin/main)" != "$BASE_SHA" ]]; then
+            echo '::error::main changed during build. Nothing was overwritten.'
+            exit 1
+          fi
+          if [[ "$NEW_SHA" != "$BASE_SHA" ]]; then
+            git push origin "$NEW_SHA:refs/heads/main"
+          fi
+          gh release create "$TAG" \
+            '${{ steps.ipa.outputs.ipa_path }}#uYouEnhanced.ipa' \
+            -R "$GITHUB_REPOSITORY" --target "$NEW_SHA" \
+            --title "uYouEnhanced custom build ${NEW_SHA:0:12}" \
+            --notes "Auto-built from the fork's unchanged custom buildapp.yml with SponsorBlock enabled." \
+            --latest
+          git push origin --delete "$BRANCH"
+          echo "LATEST: https://github.com/$GITHUB_REPOSITORY/releases/latest/download/uYouEnhanced.ipa"

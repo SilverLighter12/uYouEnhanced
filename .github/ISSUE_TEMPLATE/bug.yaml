@@ -1,0 +1,157 @@
+name: Bug Report
+description: Report a crash or misbehavior in uYouEnhanced
+title: "[Bug] Replace this with your title"
+labels: bug
+body:
+- type: checkboxes
+  attributes:
+    label: Is there an existing issue for this?
+    options:
+    - label: I have searched the existing issues
+      required: true
+
+- type: checkboxes
+  attributes:
+    label: Have you read the Wiki?
+    description: |
+      Please ensure you have read the [**Wiki**](https://github.com/arichornlover/uYouEnhanced/wiki)
+    options:
+    - label: Yes, I have read the Wiki
+      required: true
+
+- type: markdown
+  attributes:
+    value: "## Device & App Info"
+
+- type: input
+  attributes:
+    label: iOS/iPadOS version
+    placeholder: iOS 27.0
+  validations:
+    required: true
+
+- type: input
+  attributes:
+    label: Device model (iPad or iPhone, it depends on the issue, don't need both models, just one.)
+    placeholder: iPad Pro (M5) / iPhone 18 Pro Max
+  validations:
+    required: true
+
+- type: input
+  attributes:
+    label: YouTube version (optional, depends when building on a different YT version)
+    description: "Found in the uYouEnhanced settings header, or Settings → General → About inside YouTube. (Spoofed versions don't count)"
+    placeholder: "21.xx.x"
+  validations:
+    required: false
+
+- type: input
+  attributes:
+    label: uYouEnhanced version
+    placeholder: "21.xx.x-3.0.5"
+    description: "**latest or newest is NOT a version number!**"
+  validations:
+    required: true
+
+- type: input
+  attributes:
+    label: Sideload method
+    placeholder: SideStore, AltStore, Sideloadly, TrollStore, Signulous, ...
+  validations:
+    required: true
+
+- type: dropdown
+  attributes:
+    label: When does the problem happen?
+    options:
+      - The app crashes immediately on launch (instant, like around ~5 seconds upon launch)
+      - The app crashes after launch (during use)
+      - No crash — a feature just doesn't work correctly
+  validations:
+    required: true
+
+- type: dropdown
+  attributes:
+    label: Do you use YouTube Premium?
+    options:
+      - "No, I don't use YouTube Premium"
+      - "Yes, I do use YouTube Premium"
+  validations:
+    required: true
+
+- type: markdown
+  attributes:
+    value: "## Description"
+
+- type: textarea
+  attributes:
+    label: Describe the bug
+    description: Attach videos or screenshots if possible.
+  validations:
+    required: true
+
+- type: textarea
+  attributes:
+    label: Steps to reproduce the issue
+    value: |
+        1. 
+        2. 
+        3. 
+  validations:
+    required: true
+
+- type: textarea
+  id: logs
+  attributes:
+    label: Crash log (.ips file)
+    description: |
+      If the app crashes, attach the `.ips` file directly (drag it into this box).
+      Find it in **Settings → Privacy & Security → Analytics & Improvements → Analytics Data → YouTube-<date>-<time>.ips**
+      (use the entry matching the crash time).
+    render: shell
+  validations:
+    required: false
+
+- type: checkboxes
+  attributes:
+    label: Which optional tweaks are enabled? (check all that apply)
+    options:
+    - label: iSponsorBlock
+    - label: YTUHD
+    - label: None of these / default configuration
+
+- type: dropdown
+  attributes:
+    label: Are you using the newest version of uYouEnhanced?
+    description: Update to the [latest version](https://github.com/arichornlover/uYouEnhanced/releases) to see if it fixes your issue
+    options:
+      - "Yes, I'm using the latest version"
+      - "No, I'll explain at the end"
+  validations:
+    required: true
+
+- type: dropdown
+  attributes:
+    label: Does the issue happen with the official YouTube from the App Store?
+    options:
+      - "No, I can't reproduce this issue in the official YouTube"
+      - "Yes, I can reproduce this issue in the official YouTube"
+  validations:
+    required: true
+
+- type: dropdown
+  attributes:
+    label: How was this IPA built or obtained? (Optional)
+    options:
+      - buildapp.yml (GitHub Actions — as described in the [Wiki - Building](https://github.com/arichornlover/uYouEnhanced/wiki/Building))
+      - build.sh (Shell script)
+      - AltStore Source (from https://raw.githubusercontent.com/arichornlover/arichornlover.github.io/main/apps.json)
+      - Other (untrusted or unofficial sources)
+  validations:
+    required: false
+
+- type: textarea
+  attributes:
+    label: Additional context
+  validations:
+    required: false
